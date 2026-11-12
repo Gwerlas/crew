@@ -1,0 +1,57 @@
+---
+# The user the workers run as. Unix permissions are what keep it out of the
+# owner's files, tokens and ~/.claude.
+crew_user: crew
+
+# The group the owner and the workers share: the shared directories belong to
+# it. Not a group anyone else is in.
+crew_group: developers
+
+# The workers' supplementary groups, and no others. Add kvm, for instance, for
+# workers that start VMs on their own qemu:///session.
+crew_groups:
+  - "{{ crew_group }}"
+
+# The person the workers work for: in crew_group, and the only one allowed to
+# launch them. Read from the facts, so it is whoever runs the play.
+crew_owner: "{{ ansible_facts.user_id }}"
+
+# The group of crew_owner's home, which the role sets to mode 0750. Its members
+# keep reading what the home leaves open to them; it must not be a group of
+# crew_groups, or the home stays open to the workers. Unset, the owner's
+# primary group.
+crew_owner_home_group: ""
+
+# What a worker hands over (its merge request description, its cold read) and
+# its logs, readable and writable by crew_owner and crew_user. Must match
+# crew.shared in the team's configuration.
+crew_shared_dir: /var/lib/crew
+
+# The run files the owner writes for the launcher, read-only for crew_user.
+# Must match crew.runs in the team's configuration.
+crew_runs_dir: /var/lib/crew-runs
+
+# The team's .crew directory, on the controller: config.json, the brief
+# fragments its profiles name, and the helpers directory its "helpers" key
+# names. Required.
+# crew_config_dir: "{{ playbook_dir }}/.crew"
+
+# GitLab access tokens of the workers, by the path of the group or project
+# each one is scoped to, e.g. {"example-group": "glpat-..."}: crew's
+# setting-up guide, step 3, says which. Required, vaulted. The first install's
+# only: the renewal timer rotates them in the workers' home afterwards.
+crew_gitlab_tokens: {}
+
+# Where the worker tooling is installed, root-owned: the two skills'
+# directories, and the team's configuration beside them. Its crew-member/run
+# is the only command crew_owner may run as crew_user; the configuration's
+# crew.launcher must name it.
+crew_root: /usr/local/libexec/crew
+
+# The crew release the tooling under crew_root comes from, and where it is
+# checked out, root-owned like what is copied from it. The plugin of the
+# owner's session must be at the same release.
+crew_repo: https://gitlab.com/yoanncolin/agents/crew.git
+# renovate: datasource=gitlab-tags depName=yoanncolin/agents/crew
+crew_version: 0.22.0
+crew_src: /usr/local/src/crew

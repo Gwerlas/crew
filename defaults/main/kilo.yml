@@ -1,0 +1,20 @@
+---
+# The Kilo CLI of the workers, installed when a profile of the team's
+# configuration runs on kilo. Without one, the role leaves the workers' home
+# as it found it, a Kilo installed earlier included.
+
+# `latest` has the role install the latest Kilo CLI on every run: installed
+# in the workers' home, Kilo cannot update itself. A version installs that one
+# whenever another is in place, with Kilo's autoupdate off.
+crew_kilo_version: latest
+
+# The provider Kilo answers on: an Ollama publishing its API on the host's
+# loopback, so the workers' Kilo spends no subscription. crew_kilo_context is
+# the context Ollama runs the model at, which Kilo reads to know when to
+# compact a session; crew_kilo_output is the share of it Kilo keeps for an
+# answer. Ollama's default context, 4096, cuts a Kilo run's start, some 5,800
+# tokens with crew's agent: name a model variant built with a longer one.
+crew_kilo_ollama_url: http://127.0.0.1:11434/v1
+crew_kilo_model: qwen3:8b
+crew_kilo_context: 4096
+crew_kilo_output: 2048

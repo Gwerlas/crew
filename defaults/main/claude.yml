@@ -1,0 +1,14 @@
+---
+# Claude Code for the workers, installed when a profile of the team's
+# configuration runs on claude-code.
+
+# `latest` installs Claude Code when it is missing and leaves it to its own
+# updater. A version, such as 2.1.30, installs that one whenever another is in
+# place, and turns the workers' updater off, so that nothing moves it but this
+# variable.
+crew_claude_version: latest
+
+# Token from `claude setup-token`, run by crew_owner: the workers' Claude Code
+# logs in with it and draws on crew_owner's subscription. Required when a
+# profile runs on claude-code, vaulted.
+crew_claude_token: ""

@@ -1,0 +1,90 @@
+---
+# The Kilo CLI of the workers, in their ~/.local: npm --prefix puts the
+# package under lib/node_modules (lib64 on some distributions), and its `kilo`
+# link in bin. Installed so, Kilo finds no install method it knows (`npm list
+# -g` reads the system prefix) and never upgrades itself: at `latest`, the role
+# asks the registry for the latest release on every run instead. runuser rather
+# than become_user, for the reason claude.yml gives. Like `claude --version`,
+# `kilo --version` prints nothing when the binary is missing, hence the
+# regex.
+#
+# npm comes from the system's Node.js, which this role does not install.
+- name: Look for the npm Kilo installs with
+  ansible.builtin.command:
+    cmd: runuser -l {{ crew_user }} -c 'command -v npm'
+  register: _crew_kilo_npm
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Refuse to install Kilo without npm
+  ansible.builtin.assert:
+    # A dry run on a host where the user does not exist yet cannot tell.
+    that: _crew_kilo_npm.rc == 0 or (ansible_check_mode and _crew_account is changed)
+    fail_msg: >-
+      A profile runs on kilo, but {{ crew_user }} has no npm on its PATH:
+      install Node.js, or move that profile to another runner.
+    quiet: true
+
+- name: Read the Kilo CLI version of the workers
+  ansible.builtin.command:
+    cmd: runuser -l {{ crew_user }} -c '{{ _crew_home }}/.local/bin/kilo --version'
+  register: _crew_kilo_installed
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Read the latest Kilo CLI release
+  ansible.builtin.command:
+    cmd: runuser -l {{ crew_user }} -c 'npm view @kilocode/cli version'
+  register: _crew_kilo_latest
+  changed_when: false
+  check_mode: false
+  # A dry run on a host where the user does not exist yet cannot ask.
+  failed_when: _crew_kilo_latest.rc != 0 and not (ansible_check_mode and _crew_account is changed)
+  when: not _crew_kilo_pinned | bool
+
+- name: Install the Kilo CLI for the workers
+  ansible.builtin.command:
+    cmd: >-
+      runuser -l {{ crew_user }} -c 'npm install --global --no-fund --no-audit
+      --prefix {{ _crew_home }}/.local @kilocode/cli@{{ _crew_kilo_wanted }}'
+  changed_when: true
+  when: _crew_kilo_found != _crew_kilo_wanted
+  vars:
+    _crew_kilo_found: "{{ _crew_kilo_installed.stdout | regex_search('\\d+\\.\\d+\\.\\d+') | default('', true) }}"
+    _crew_kilo_wanted: "{{ crew_kilo_version if _crew_kilo_pinned | bool else _crew_kilo_latest.stdout | trim }}"
+
+- name: Kilo configuration directory of the workers
+  ansible.builtin.file:
+    path: "{{ _crew_home }}/.config/kilo"
+    state: directory
+    owner: "{{ crew_user }}"
+    group: "{{ _crew_user_group }}"
+    mode: "0700"
+
+# Kilo's global configuration. autoupdate false, with a pinned version, stops
+# the notice of a newer minor, and the patch upgrade Kilo runs at start should
+# it ever find an install method it knows.
+# enabled_providers keeps out every provider but the local one, Kilo's own
+# gateway included: no run can spend an account by accident.
+- name: Kilo configuration of the workers
+  ansible.builtin.copy:
+    dest: "{{ _crew_home }}/.config/kilo/kilo.json"
+    content: "{{ _crew_kilo_config | to_nice_json(indent=2) }}\n"
+    owner: "{{ crew_user }}"
+    group: "{{ _crew_user_group }}"
+    mode: "0600"
+  vars:
+    _crew_kilo_config: >-
+      {{ {'$schema': 'https://app.kilo.ai/config.json'}
+         | combine({'autoupdate': false} if _crew_kilo_pinned | bool else {})
+         | combine({
+             'model': 'ollama/' + crew_kilo_model,
+             'enabled_providers': ['ollama'],
+             'provider': {'ollama': {
+               'options': {'baseURL': crew_kilo_ollama_url},
+               'models': {crew_kilo_model: {
+                 'name': crew_kilo_model,
+                 'limit': {'context': crew_kilo_context | int,
+                           'output': crew_kilo_output | int}}}}}}) }}

@@ -1,0 +1,41 @@
+---
+# The launcher's place follows from the skills' layout under crew_root, which
+# the scripts rely on to find each other.
+_crew_launcher: "{{ crew_root }}/crew-member/run"
+
+# The workers' home and primary group. A dry run on a host where the user does
+# not exist yet gets neither from the user module: the default home path and
+# the user's name stand in, so that the run goes on and reports the rest.
+_crew_home: "{{ _crew_account.home | default('/home/' + crew_user) }}"
+_crew_user_group: "{{ _crew_account.group | default(crew_user) }}"
+
+# The team's configuration, read on the controller, its profiles, and the
+# runners they name: the role installs each of these, and only these, among
+# the ones it knows how to install.
+_crew_known_runners: [claude-code, kilo]
+_crew_team_config: "{{ lookup('ansible.builtin.file', crew_config_dir + '/config.json') | from_json }}"
+_crew_profiles: "{{ _crew_team_config.profiles | default({}) }}"
+_crew_runners: "{{ _crew_profiles.values() | map(attribute='runner', default='') | unique | list }}"
+_crew_claude: "{{ 'claude-code' in _crew_runners }}"
+_crew_kilo: "{{ 'kilo' in _crew_runners }}"
+
+# Whether the workers' Claude Code and Kilo CLI are held at a version.
+_crew_claude_pinned: "{{ crew_claude_version != 'latest' }}"
+_crew_kilo_pinned: "{{ crew_kilo_version != 'latest' }}"
+
+# The group the owner's home gets: crew_owner_home_group, else the owner's
+# primary group, read once getent has run.
+_crew_owner_home_group: "{{ crew_owner_home_group or ansible_facts.getent_passwd[crew_owner][2] }}"
+
+# The entry getent read for it.
+_crew_home_group_entry: "{{ _crew_home_group.ansible_facts.getent_group.values() | first }}"
+
+# Each scope's GitLab token: the one its file already holds, else the vaulted
+# one, which only a first install, or a file removed by hand, ever reads.
+_crew_gitlab_current: >-
+  {%- set ns = namespace(tokens={}) -%}
+  {%- for held in _crew_gitlab_held.results -%}
+  {%- set token = held.content | default('') | ansible.builtin.b64decode | trim -%}
+  {%- set ns.tokens = ns.tokens | combine({held.item: token or crew_gitlab_tokens[held.item]}) -%}
+  {%- endfor -%}
+  {{ ns.tokens }}

@@ -1,0 +1,28 @@
+---
+galaxy_info:
+  role_name: crew
+  author: Yoann Gauthier-Colin
+  namespace: gwerlas
+  description: Set up crew's coding-agent workers on a host
+
+  issue_tracker_url: https://gitlab.com/yoanncolin/ansible/roles/crew/-/issues
+
+  license: BSD-3-Clause
+
+  min_ansible_version: "2.20"
+
+  platforms:
+    - name: Debian
+      versions:
+        - bookworm
+        - trixie
+    - name: Gentoo
+      versions:
+        - all
+  galaxy_tags:
+    - ai
+    - agents
+    - claude
+    - gitlab
+
+dependencies: []

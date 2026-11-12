@@ -1,0 +1,87 @@
+---
+# The native installer rather than a package: it puts Claude Code in the
+# workers' ~/.local, as crew's setting-up guide does. The script is not
+# pinned or checked, only the version it installs. Code from claude.ai then
+# runs as a user that holds the GitLab write tokens, but has no sudo and no
+# access to the owner's home.
+#
+# runuser rather than become_user: the commands need the workers' login
+# environment (~/.local/bin on the PATH), and a module run as them would reach
+# them through Ansible's hand-over to an unprivileged user (a temporary
+# directory with an ACL for them, or world-readable files as a last resort),
+# while they run code nobody checked. Root runs the module, and runuser hands
+# the workers one command line. `claude --version` prints the
+# version followed by "(Claude Code)", and nothing at all when the binary is
+# missing: pulling the three-part number out with a regex covers both.
+- name: Read the Claude Code version of the workers
+  ansible.builtin.command:
+    cmd: runuser -l {{ crew_user }} -c '{{ _crew_home }}/.local/bin/claude --version'
+  register: _crew_claude_installed
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Install Claude Code for the workers
+  ansible.builtin.command:
+    cmd: >-
+      runuser -l {{ crew_user }} -c 'set -o pipefail; curl -fsSL https://claude.ai/install.sh
+      | bash{{ (' -s ' + crew_claude_version) if _crew_claude_pinned | bool else '' }}'
+  changed_when: true
+  when: >-
+    _crew_claude_found == ''
+    or (_crew_claude_pinned | bool and _crew_claude_found != crew_claude_version)
+  vars:
+    _crew_claude_found: "{{ _crew_claude_installed.stdout | regex_search('\\d+\\.\\d+\\.\\d+') | default('', true) }}"
+
+- name: Environment directory of the workers' user manager
+  ansible.builtin.file:
+    path: "{{ _crew_home }}/{{ item }}"
+    state: directory
+    owner: "{{ crew_user }}"
+    group: "{{ _crew_user_group }}"
+    mode: "0755"
+  loop:
+    - .config
+    - .config/environment.d
+  when: _crew_claude_pinned | bool
+
+# A worker's session reads no user settings (--setting-sources project,local),
+# so the workers' settings.json cannot turn the updater off. Each worker is a
+# unit of the workers' user manager and inherits its environment: the variable
+# goes there, in the file the manager reads at its start, and in the running
+# manager at once. The file is named after the pin rather than after what it
+# disables, so that no setting reads as a double negation.
+- name: Hold the workers' Claude Code at its pinned version
+  ansible.builtin.copy:
+    dest: "{{ _crew_home }}/.config/environment.d/50-claude-pinned.conf"
+    content: |
+      # Managed by Ansible, role gwerlas.crew: crew_claude_version is pinned.
+      DISABLE_AUTOUPDATER=1
+    owner: "{{ crew_user }}"
+    group: "{{ _crew_user_group }}"
+    mode: "0644"
+  when: _crew_claude_pinned | bool
+  register: _crew_claude_pin
+
+- name: Let the workers' Claude Code update itself
+  ansible.builtin.file:
+    path: "{{ _crew_home }}/.config/environment.d/50-claude-pinned.conf"
+    state: absent
+  when: not _crew_claude_pinned | bool
+  register: _crew_claude_unpin
+
+# systemctl -M rather than the systemd module, which only reaches the user
+# manager of the user it runs as: the reason given for runuser above.
+- name: Pass the pin to the running user manager of the workers
+  ansible.builtin.command:  # noqa: command-instead-of-module no-handler
+    cmd: >-
+      systemctl --user -M {{ crew_user }}@
+      {{ 'set-environment DISABLE_AUTOUPDATER=1' if _crew_claude_pinned | bool else 'unset-environment DISABLE_AUTOUPDATER' }}
+  when: (_crew_claude_pin is changed) or (_crew_claude_unpin is changed)
+  changed_when: true
+  # On a first run, the user manager lingering just started may not have its
+  # bus yet.
+  register: _crew_claude_environment
+  until: _crew_claude_environment.rc == 0
+  retries: 10
+  delay: 3

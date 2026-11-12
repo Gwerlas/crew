@@ -1,0 +1,75 @@
+---
+# The units crew's setting-up guide gives (step 8). Their names stay out of
+# crew-*, which the launcher takes for a worker's run, so that a renewal does
+# not wait for itself. OnStartupSec is the role's: the renewal skips a night
+# with a run in flight, and a machine left on overnight is often waiting for
+# one to finish, so it also runs shortly after boot, before anyone has
+# launched one. The restart on exit 75 covers a boot where the network is not
+# up yet.
+- name: Daily renewal of the workers' GitLab tokens
+  ansible.builtin.copy:
+    dest: "{{ _crew_home }}/.config/systemd/user/{{ item.name }}"
+    content: "{{ item.content }}"
+    owner: "{{ crew_user }}"
+    group: "{{ _crew_user_group }}"
+    mode: "0644"
+  loop:
+    - name: renew-gitlab-tokens.service
+      content: |
+        # Managed by Ansible, role gwerlas.crew.
+        [Unit]
+        Description=Renew the workers' GitLab tokens
+        StartLimitIntervalSec=2h
+        StartLimitBurst=13
+
+        [Service]
+        Type=oneshot
+        ExecStart={{ _crew_launcher }} renew-tokens
+        RestartForceExitStatus=75
+        RestartSec=5min
+    - name: renew-gitlab-tokens.timer
+      content: |
+        # Managed by Ansible, role gwerlas.crew.
+        [Unit]
+        Description=Renew the workers' GitLab tokens daily
+
+        [Timer]
+        OnCalendar=daily
+        OnStartupSec=5min
+        Persistent=true
+
+        [Install]
+        WantedBy=timers.target
+  loop_control:
+    label: "{{ item.name }}"
+  register: _crew_renewal_units
+
+# systemctl -M rather than the systemd module, for the reason claude.yml
+# gives.
+- name: Read the workers' user units again
+  ansible.builtin.command:  # noqa: command-instead-of-module no-handler
+    cmd: systemctl --user -M {{ crew_user }}@ daemon-reload
+  when: _crew_renewal_units is changed
+  changed_when: true
+
+# Linger starts the user manager without waiting for it: on a first run, its
+# bus may not be there yet.
+- name: State of the renewal timer
+  ansible.builtin.command:  # noqa: command-instead-of-module
+    cmd: systemctl --user -M {{ crew_user }}@ show renew-gitlab-tokens.timer --property=UnitFileState,ActiveState
+  register: _crew_renewal_timer
+  changed_when: false
+  check_mode: false
+  # A dry run on a host where linger is not on yet finds no user manager.
+  failed_when: _crew_renewal_timer.rc != 0 and not ansible_check_mode
+  until: _crew_renewal_timer.rc == 0 or ansible_check_mode
+  retries: 10
+  delay: 3
+
+- name: Start the renewal timer
+  when: >-
+    'UnitFileState=enabled' not in _crew_renewal_timer.stdout_lines
+    or 'ActiveState=active' not in _crew_renewal_timer.stdout_lines
+  ansible.builtin.command:  # noqa: command-instead-of-module
+    cmd: systemctl --user -M {{ crew_user }}@ enable --now renew-gitlab-tokens.timer
+  changed_when: true

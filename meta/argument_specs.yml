@@ -1,0 +1,89 @@
+---
+argument_specs:
+  main:
+    short_description: Set up crew's coding-agent workers on a host
+    description:
+      - Follows crew's setting-up guide, steps 1 to 6 and 8, see the README.
+    options:
+      crew_config_dir:
+        description: The team's .crew directory on the controller, holding config.json, its brief fragments and helpers.
+        type: path
+        required: true
+      crew_user:
+        description: The user the workers run as.
+        type: str
+        default: crew
+      crew_group:
+        description: The group the owner and the workers share.
+        type: str
+        default: developers
+      crew_groups:
+        description: The workers' supplementary groups, and no others.
+        type: list
+        elements: str
+        default: ["{{ crew_group }}"]
+      crew_owner:
+        description: The person the workers work for, the only one allowed to launch them.
+        type: str
+        default: "{{ ansible_facts.user_id }}"
+      crew_owner_home_group:
+        description: The group of the owner's home, set to mode 0750; never a group the workers are in.
+        type: str
+        default: ""
+      crew_shared_dir:
+        description: Where the workers hand files over and log; crew.shared in the configuration.
+        type: path
+        default: /var/lib/crew
+      crew_runs_dir:
+        description: Where the owner writes the run files; crew.runs in the configuration.
+        type: path
+        default: /var/lib/crew-runs
+      crew_claude_version:
+        description: latest, left to Claude Code's updater, or a version the workers are held at.
+        type: str
+        default: latest
+      crew_claude_token:
+        description: Token from claude setup-token, required when a profile runs on claude-code.
+        type: str
+        default: ""
+        no_log: true
+      crew_kilo_version:
+        description: latest, installed again on every run, or a version the workers are held at.
+        type: str
+        default: latest
+      crew_kilo_ollama_url:
+        description: The Ollama API Kilo answers on.
+        type: str
+        default: http://127.0.0.1:11434/v1
+      crew_kilo_model:
+        description: The Ollama model Kilo runs.
+        type: str
+        default: qwen3:8b
+      crew_kilo_context:
+        description: The context Ollama runs the model at.
+        type: int
+        default: 4096
+      crew_kilo_output:
+        description: The share of the context Kilo keeps for an answer.
+        type: int
+        default: 2048
+      crew_gitlab_tokens:
+        description: The workers' GitLab access tokens, by the path of the group or project each is scoped to; the first install's only.
+        type: dict
+        default: {}
+        no_log: true
+      crew_root:
+        description: Where the worker tooling is installed, root-owned.
+        type: path
+        default: /usr/local/libexec/crew
+      crew_repo:
+        description: The crew repository the tooling comes from.
+        type: str
+        default: https://gitlab.com/yoanncolin/agents/crew.git
+      crew_version:
+        description: The crew release installed, defaults/main/common.yml giving the latest one tested; the owner's plugin must be at the same one.
+        type: str
+      crew_src:
+        description: Where crew is checked out, root-owned.
+        type: path
+        default: /usr/local/src/crew

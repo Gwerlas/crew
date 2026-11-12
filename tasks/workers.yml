@@ -1,0 +1,249 @@
+---
+# The workers' side of crew's setting-up guide: steps 1 to 6 and 8, in its
+# order.
+
+- name: Refuse to set up workers that could not log in
+  ansible.builtin.assert:
+    that:
+      - crew_gitlab_tokens | length > 0
+      - not _crew_claude | bool or crew_claude_token | length > 0
+    fail_msg: >-
+      crew_gitlab_tokens is required, and crew_claude_token when a profile
+      runs on claude-code: without them the workers can neither push nor run
+      Claude Code. crew's setting-up guide, steps 2 and 3, says how to make
+      them.
+    quiet: true
+
+# crew_owner comes from the facts: a play run as root (sudo ansible-playbook)
+# would otherwise make root the one who launches the workers, and close /root
+# in place of the owner's home, silently.
+- name: Refuse an owner the workers cannot work for
+  ansible.builtin.assert:
+    that:
+      - crew_owner not in ['root', crew_user]
+    fail_msg: >-
+      crew_owner is {{ crew_owner }}: run the play as the person the workers
+      work for, not with sudo, or set crew_owner.
+    quiet: true
+
+# Step 1.
+- name: Group the owner and the workers share
+  ansible.builtin.group:
+    name: "{{ crew_group }}"
+  register: _crew_shared_group
+
+- name: User the workers run as
+  ansible.builtin.user:
+    name: "{{ crew_user }}"
+    comment: crew workers
+    shell: /bin/bash
+    groups: "{{ crew_groups }}"
+  register: _crew_account
+
+# useradd leaves the home readable by every local user. What a worker keeps
+# there is for no one else: its sessions and their history, its clones, its
+# credentials.
+- name: Close the workers' home to other users
+  ansible.builtin.file:
+    path: "{{ _crew_home }}"
+    state: directory
+    mode: "0700"
+
+# Takes effect at the owner's next login.
+- name: Let the owner work with the workers
+  ansible.builtin.user:
+    name: "{{ crew_owner }}"
+    groups: "{{ crew_group }}"
+    append: true
+  # A dry run cannot add the owner to a group it has not made.
+  when: not (ansible_check_mode and _crew_shared_group is changed)
+
+# Keeps the user manager up with nobody logged in as the workers: every
+# worker is a unit of it.
+- name: Keep the workers' user manager running
+  ansible.builtin.command:
+    cmd: loginctl enable-linger {{ crew_user }}
+    creates: /var/lib/systemd/linger/{{ crew_user }}
+
+- name: User units directory of the workers
+  ansible.builtin.file:
+    path: "{{ _crew_home }}/{{ item }}"
+    state: directory
+    owner: "{{ crew_user }}"
+    group: "{{ _crew_user_group }}"
+    mode: "0755"
+  loop:
+    - .config
+    - .config/systemd
+    - .config/systemd/user
+
+- name: Home of the owner
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ crew_owner }}"
+
+- name: Group of the owner's home
+  ansible.builtin.getent:
+    database: group
+    key: "{{ _crew_owner_home_group }}"
+  register: _crew_home_group
+
+# A home whose group the workers belong to stays open to them whatever its
+# mode. getent answers one entry, keyed by the group's name whether the
+# variable gives the name or the GID; its values are the password, the GID,
+# then the members.
+- name: Refuse a home group the workers belong to
+  ansible.builtin.assert:
+    that:
+      - crew_user not in _crew_home_group_entry[2].split(',')
+      - (_crew_home_group_entry[1] | int) != (_crew_account.group | default(-1) | int)
+    fail_msg: >-
+      The owner's home group, {{ _crew_owner_home_group }}, is a group
+      {{ crew_user }} belongs to: the owner's home would stay open to the
+      workers.
+    quiet: true
+
+- name: Close the owner's home to the workers
+  ansible.builtin.file:
+    path: "{{ ansible_facts.getent_passwd[crew_owner][4] }}"
+    group: "{{ _crew_owner_home_group }}"
+    mode: "0750"
+
+# Step 2, and the Kilo CLI of crew's Kilo Code page: each runner a profile
+# names. One no profile names is left as found, installed earlier or not.
+- name: Claude Code of the workers
+  ansible.builtin.include_tasks: claude.yml
+  when: _crew_claude | bool
+
+- name: Kilo CLI of the workers
+  ansible.builtin.include_tasks: kilo.yml
+  when: _crew_kilo | bool
+
+- name: Credentials directory of the workers
+  ansible.builtin.file:
+    path: "{{ _crew_home }}/{{ item }}"
+    state: directory
+    owner: "{{ crew_user }}"
+    group: "{{ _crew_user_group }}"
+    mode: "0700"
+  loop:
+    - .config/crew
+    - .config/crew/gitlab
+    - .config/crew/git-credentials
+
+- name: Claude Code token of the workers
+  ansible.builtin.copy:
+    dest: "{{ _crew_home }}/.config/crew/claude-token"
+    content: "{{ crew_claude_token }}\n"
+    owner: "{{ crew_user }}"
+    group: "{{ _crew_user_group }}"
+    mode: "0600"
+  when: _crew_claude | bool
+  no_log: true
+  diff: false
+
+# Step 3. The tokens given are the first install's only: the renewal timer
+# below rotates each one before it expires, and writes the new one in both
+# files of its scope. Writing the given one back would hand the workers a
+# revoked token, and rotating a revoked token revokes every token made from
+# it, the new one included. A scope's file, when it holds a token, therefore
+# wins (_crew_gitlab_current).
+- name: GitLab tokens the workers already hold
+  ansible.builtin.slurp:
+    src: "{{ _crew_home }}/.config/crew/gitlab/{{ item | replace('/', '-') }}"
+  loop: "{{ crew_gitlab_tokens.keys() | list }}"
+  register: _crew_gitlab_held
+  failed_when: false
+  no_log: true
+
+# One file per scope, named after its path with "/" turned into "-":
+# example-group/infra's token lands in gitlab/example-group-infra.
+- name: GitLab tokens of the workers
+  ansible.builtin.copy:
+    dest: "{{ _crew_home }}/.config/crew/gitlab/{{ item.key | replace('/', '-') }}"
+    content: "{{ item.value }}\n"
+    owner: "{{ crew_user }}"
+    group: "{{ _crew_user_group }}"
+    mode: "0600"
+  loop: "{{ _crew_gitlab_current | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  no_log: true
+  diff: false
+
+# git reads each token from its scope's store, set per clone: never in a
+# remote URL, where it would land in .git/config, nor on a command line. git
+# empties a store when the forge refuses its token: written on every run, it
+# comes back with the token the file holds, which the renewal requires of both
+# files. gitlab.com, since crew's launcher reads and renews no other forge.
+- name: Git credential stores of the workers
+  ansible.builtin.copy:
+    dest: "{{ _crew_home }}/.config/crew/git-credentials/{{ item.key | replace('/', '-') }}"
+    content: "https://oauth2:{{ item.value }}@gitlab.com\n"
+    owner: "{{ crew_user }}"
+    group: "{{ _crew_user_group }}"
+    mode: "0600"
+  loop: "{{ _crew_gitlab_current | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  no_log: true
+  diff: false
+
+# Step 4. Sticky: either side may write there, but neither may rename or
+# remove what the other owns. The setgid bit gives new files the group, the
+# default ACL its write right, whatever the umask of the user who creates them.
+- name: Directories the workers hand over through
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    group: "{{ crew_group }}"
+    mode: "3770"
+  loop:
+    - "{{ crew_shared_dir }}"
+    - "{{ crew_shared_dir }}/logs"
+    - "{{ crew_shared_dir }}/scratch"
+  register: _crew_shared_dirs
+
+- name: Keep what either side writes there writable by the other
+  ansible.posix.acl:
+    path: "{{ item }}"
+    default: true
+    etype: group
+    entity: "{{ crew_group }}"
+    permissions: rwX
+    state: present
+  # A dry run cannot set an ACL on a directory it has not made.
+  when: not (ansible_check_mode and _crew_shared_dirs is changed)
+  loop:
+    - "{{ crew_shared_dir }}"
+    - "{{ crew_shared_dir }}/logs"
+    - "{{ crew_shared_dir }}/scratch"
+
+# The run files are the launcher's specification (model, branch, worktree,
+# what a worker may read): the owner writes them, the workers only read. Not
+# under crew_shared_dir, where the workers could rename the directory and make
+# one of their own in its place.
+- name: Run files of the workers
+  ansible.builtin.file:
+    path: "{{ crew_runs_dir }}"
+    state: directory
+    owner: "{{ crew_owner }}"
+    group: "{{ ansible_facts.getent_passwd[crew_owner][2] }}"
+    mode: "0755"
+
+# Step 5.
+- name: Worker tooling
+  ansible.builtin.include_tasks: tooling.yml
+
+# Step 6.
+- name: Let the owner launch the workers, and nothing else as them
+  community.general.sudoers:
+    name: crew
+    user: "{{ crew_owner }}"
+    runas: "{{ crew_user }}"
+    commands: "{{ _crew_launcher }}"
+
+# Step 8, last: the launcher, the scopes and the token files must be there
+# before the timer first fires.
+- name: Renewal of the workers' GitLab tokens
+  ansible.builtin.include_tasks: renewal.yml

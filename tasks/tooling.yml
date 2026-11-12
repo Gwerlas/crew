@@ -1,0 +1,191 @@
+---
+# The worker tooling the launcher runs, root-owned: a copy the workers could
+# write would let them change what they run under. The skills come from the
+# published crew at crew_version, the team's configuration, briefs and helpers
+# from crew_config_dir on the controller.
+
+# Each profile names its brief fragment. Each key is the brief's path in the
+# configuration (profiles.dev.brief), which the assert below prints when it
+# refuses one.
+- name: Brief fragments, helpers and launcher the team's configuration names
+  ansible.builtin.set_fact:
+    _crew_briefs: "{{ dict(_crew_profiles.keys() | map('regex_replace', '^(.*)$', 'profiles.\\1.brief')
+                     | zip(_crew_profiles.values() | map(attribute='brief', default=''))) }}"
+    _crew_helpers: "{{ _crew_team_config.helpers | default(none) }}"
+    _crew_config_launcher: "{{ _crew_team_config.crew.launcher | default(none) }}"
+
+# worker.py reads them only beside the configuration; a name with a slash
+# would also have this copy, as root, write elsewhere.
+- name: Refuse a brief fragment or helpers not beside the configuration
+  ansible.builtin.assert:
+    that:
+      - item.value is string
+      - item.value | length > 0
+      - item.value == item.value | basename
+      - not item.value.startswith('.')
+    fail_msg: >-
+      {{ crew_config_dir }}/config.json: {{ item.key }} must name something
+      beside it, not {{ item.value }}
+    quiet: true
+  loop: "{{ _crew_briefs | combine({'helpers': _crew_helpers} if _crew_helpers is not none else {}) | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+# worker.py asks the launcher the configuration names, and sudo allows only
+# the one this role installs.
+- name: Refuse a launcher the role does not install
+  ansible.builtin.assert:
+    that: _crew_config_launcher == _crew_launcher
+    fail_msg: >-
+      {{ crew_config_dir }}/config.json: crew.launcher must be
+      {{ _crew_launcher }}, not {{ _crew_config_launcher }}
+    quiet: true
+
+- name: Published crew
+  ansible.builtin.git:
+    repo: "{{ crew_repo }}"
+    dest: "{{ crew_src }}"
+    version: "{{ crew_version }}"
+    depth: 1
+    force: true
+  register: _crew_checkout
+
+# On the checkout the skills are copied from, what crew's guide sets: the
+# workers read every file, and run those git made executable. git leaves the
+# modes to root's umask, and copy, which cannot set the modes of the files of
+# a directory it copies on the host, preserves them. a+rX only adds: git's
+# read-only objects stay so.
+- name: Let the workers read and run the published crew
+  ansible.builtin.file:
+    path: "{{ crew_src }}"
+    state: directory
+    recurse: true
+    owner: root
+    group: root
+    mode: a+rX
+
+- name: Directory of the worker tooling
+  ansible.builtin.file:
+    path: "{{ crew_root }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# A dry run does not check crew_version out, so it cannot copy from a
+# checkout that is missing or at another version. The skills' directories
+# whole, as crew's guide copies them.
+- name: Skills of the worker tooling
+  when: not (ansible_check_mode and _crew_checkout is changed)
+  block:
+    - name: Copy both skills
+      ansible.builtin.copy:
+        src: "{{ crew_src }}/skills/{{ item }}"
+        remote_src: true
+        dest: "{{ crew_root }}/"
+        owner: root
+        group: root
+        mode: preserve
+        directory_mode: "0755"
+      loop:
+        - crew-manager
+        - crew-member
+
+    # The installed copy's version: the launcher refuses a new run whose run
+    # file names another one.
+    - name: Version of the worker tooling
+      ansible.builtin.copy:
+        src: "{{ crew_src }}/.claude-plugin/plugin.json"
+        remote_src: true
+        dest: "{{ crew_root }}/plugin.json"
+        owner: root
+        group: root
+        mode: "0644"
+
+    # What is installed is exactly what the release holds: a file a release
+    # dropped would otherwise stay, and be run.
+    - name: Files of the release
+      ansible.builtin.find:
+        paths: "{{ crew_src }}/skills/{{ item }}"
+        file_type: any
+        recurse: true
+        hidden: true
+      loop:
+        - crew-manager
+        - crew-member
+      register: _crew_release_files
+
+    - name: Files of the installed skills
+      ansible.builtin.find:
+        paths: "{{ crew_root }}/{{ item }}"
+        file_type: any
+        recurse: true
+        hidden: true
+      loop:
+        - crew-manager
+        - crew-member
+      register: _crew_installed_files
+
+    - name: Remove what the release no longer holds
+      ansible.builtin.file:
+        path: "{{ crew_root }}/{{ item }}"
+        state: absent
+      loop: >-
+        {{ _crew_installed_files.results | map(attribute='files') | flatten
+           | map(attribute='path') | map('relpath', crew_root)
+           | difference(_crew_release_files.results | map(attribute='files') | flatten
+                        | map(attribute='path') | map('relpath', crew_src + '/skills')) }}
+
+# Beside the skills, config.json tells their scripts they are the installed
+# copy, which reads that file alone. With it, the brief fragment of each
+# profile, which worker.py looks for beside the configuration.
+- name: Team configuration and briefs
+  ansible.builtin.copy:
+    src: "{{ crew_config_dir }}/{{ item }}"
+    dest: "{{ crew_root }}/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ ['config.json'] + _crew_briefs.values() | unique }}"
+
+# worker.py grants a worker every executable at the top of the directory the
+# configuration's "helpers" key names, beside it: what is installed there is
+# exactly what crew_config_dir holds, or a helper removed from it would stay
+# granted. The `exists` test reads the controller, where crew_config_dir is.
+- name: Team helpers the workers are granted
+  when: _crew_helpers is not none
+  block:
+    - name: Copy the team helpers
+      ansible.builtin.copy:
+        src: "{{ crew_config_dir }}/{{ _crew_helpers }}/"
+        dest: "{{ crew_root }}/{{ _crew_helpers }}/"
+        owner: root
+        group: root
+        mode: u=rwX,go=rX
+        directory_mode: "0755"
+
+    - name: Installed team helpers
+      ansible.builtin.find:
+        paths: "{{ crew_root }}/{{ _crew_helpers }}"
+        file_type: any
+        recurse: true
+        hidden: true
+      register: _crew_helpers_installed
+
+    - name: Remove the team helpers crew_config_dir no longer holds
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: "{{ _crew_helpers_installed.files | map(attribute='path') | list }}"
+      when: >-
+        (crew_config_dir + '/' + _crew_helpers + '/'
+         + item | relpath(crew_root + '/' + _crew_helpers)) is not exists
+
+# The launcher refuses a ticket under none of them.
+- name: GitLab scopes the workers have a token for
+  ansible.builtin.copy:
+    dest: "{{ crew_root }}/gitlab-scopes.json"
+    content: "{{ crew_gitlab_tokens.keys() | list | to_nice_json }}\n"
+    owner: root
+    group: root
+    mode: "0644"

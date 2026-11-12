@@ -1,0 +1,38 @@
+---
+# The steps of crew's setting-up guide (docs/setting-up.md), in its order,
+# except step 7, the skills in the owner's session, which is the owner's.
+# The team's configuration is checked here, before anything changes on the
+# host; the workers' side is in workers.yml.
+
+- name: Refuse a missing team configuration
+  ansible.builtin.assert:
+    that: (crew_config_dir + '/config.json') is file
+    fail_msg: >-
+      crew_config_dir must name the team's .crew directory on the controller,
+      holding config.json: crew's setting-up guide, step 5.
+    quiet: true
+
+# Without a profile every command of worker.py stops: say so before anything
+# changes on the host.
+- name: Refuse a configuration without profiles
+  ansible.builtin.assert:
+    that: _crew_profiles | length > 0
+    fail_msg: "{{ crew_config_dir }}/config.json: profiles must name at least one profile"
+    quiet: true
+
+# The runners the profiles name decide what step 2 installs: one the role
+# cannot install would leave its profile's runs failing at launch.
+- name: Refuse a runner the role does not install
+  ansible.builtin.assert:
+    that: item.value.runner | default('') in _crew_known_runners
+    fail_msg: >-
+      {{ crew_config_dir }}/config.json: profiles.{{ item.key }}.runner must
+      be one of {{ _crew_known_runners | join(', ') }}, not
+      {{ item.value.runner | default('missing', true) }}
+    quiet: true
+  loop: "{{ _crew_profiles | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+- name: Workers' side, steps 1 to 6 and 8
+  ansible.builtin.import_tasks: workers.yml
