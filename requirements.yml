@@ -1,0 +1,7 @@
+---
+collections:
+  - name: ansible.posix
+  # community.general.sudoers, which writes the launcher's rule, ships from
+  # 4.3.0 on.
+  - name: community.general
+    version: ">=4.3.0"

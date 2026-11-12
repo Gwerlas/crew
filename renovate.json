@@ -1,0 +1,18 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["local>yoanncolin/handbook"],
+  "enabledManagers": [
+    "gitlabci",
+    "ansible-galaxy",
+    "custom.regex"
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "managerFilePatterns": ["/^defaults/main/.+\\.yml$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\n\\S+: (?<currentValue>\\S+)"
+      ]
+    }
+  ]
+}

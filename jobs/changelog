@@ -1,0 +1,16 @@
+#!/bin/sh
+# Check the fragments, then that CHANGELOG.md is what they generate.
+set -eu
+
+cd "$(dirname "$0")/.."
+
+antsibull-changelog lint
+
+# Before the first release there is nothing to generate, and
+# antsibull-changelog refuses to try.
+if grep -Fxq 'releases: {}' changelogs/changelog.yaml; then
+  exit 0
+fi
+
+antsibull-changelog generate
+git diff --exit-code CHANGELOG.md
