@@ -1,8 +1,0 @@
-minor_changes:
-  - >-
-    Set up crew's workers on a host, as crew's setting-up guide does by hand,
-    steps 1 to 6 and 8: the workers' user, the runners the team's profiles
-    name (Claude Code, the Kilo CLI) at ``latest`` or a pinned version, the
-    GitLab tokens, the shared directories, the installed copy of a crew
-    release with the team's configuration, the sudo rule and the daily token
-    renewal.

@@ -8,6 +8,8 @@ workers on a GitLab backlog, on the host they run on.
 
 GitLab project: [yoanncolin/ansible/roles/crew][project]
 
+What each release changed: [CHANGELOG.md][changelog]
+
 What it does
 ------------
 
@@ -127,3 +129,4 @@ Licence
 [setting-up]: https://gitlab.com/yoanncolin/agents/crew/-/blob/main/docs/setting-up.md
 [ansible.posix]: https://galaxy.ansible.com/ui/repo/published/ansible/posix/
 [community.general]: https://galaxy.ansible.com/ui/repo/published/community/general/
+[changelog]: https://gitlab.com/yoanncolin/ansible/roles/crew/-/blob/main/CHANGELOG.md
