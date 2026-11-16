@@ -53,5 +53,5 @@ crew_root: /usr/local/libexec/crew
 # owner's session must be at the same release.
 crew_repo: https://gitlab.com/yoanncolin/agents/crew.git
 # renovate: datasource=gitlab-tags depName=yoanncolin/agents/crew
-crew_version: 0.22.0
+crew_version: 0.24.0
 crew_src: /usr/local/src/crew
